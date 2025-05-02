@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Rate Limited API Demo</title>
+		<link
+			href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css"
+			rel="stylesheet"
+		/>
+		<style>
+			.user-panel {
+				border: 1px solid #ddd;
+				border-radius: 5px;
+				padding: 15px;
+				margin-bottom: 15px;
+			}
+			.rate-info {
+				font-size: 0.9rem;
+				margin-top: 10px;
+			}
+			.progress {
+				height: 20px;
+				margin-bottom: 8px;
+			}
+			.alert-container {
+				min-height: 60px;
+			}
+			#global-counter {
+				font-size: 1.1rem;
+				font-weight: bold;
+			}
+			.ip-limit-bar .progress-bar {
+				background-color: #28a745;
+			}
+			.global-limit-bar .progress-bar {
+				background-color: #007bff;
+			}
+			.card-header {
+				font-weight: bold;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container mt-4">
+			<h1 class="mb-4">Rate Limited API Demo</h1>
+
+			<div class="row mb-4">
+				<div class="col-md-6">
+					<div class="card">
+						<div class="card-header">Request Counter</div>
+						<div class="card-body">
+							<h2 id="request-counter">0</h2>
+							<p>Total requests since server start</p>
+						</div>
+					</div>
+				</div>
+				<div class="col-md-6">
+					<div class="card">
+						<div class="card-header">Current Window Stats</div>
+						<div class="card-body">
+							<div class="global-limit-bar">
+								<div class="d-flex justify-content-between">
+									<span>Global Rate Limit:</span>
+									<span id="global-count">0/15</span>
+								</div>
+								<div class="progress">
+									<div
+										id="global-progress"
+										class="progress-bar"
+										role="progressbar"
+										style="width: 0%"
+										aria-valuenow="0"
+										aria-valuemin="0"
+										aria-valuemax="100"
+									></div>
+								</div>
+							</div>
+							<div class="mt-2">
+								<span
+									>Time Window: <span id="time-window">60 seconds</span></span
+								>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="row" id="users-container">
+				<!-- User panels will be dynamically populated here -->
+			</div>
+		</div>
+
+		<script>
+			// Mock user information
+			const users = {{ users|tojson }};
+			const IP_RATE_LIMIT = 5;
+			const GLOBAL_RATE_LIMIT = 15;
+
+			// Initialize UI
+			document.addEventListener('DOMContentLoaded', function() {
+			    // Create user panels
+			    const usersContainer = document.getElementById('users-container');
+
+			    for (const [ip, userName] of Object.entries(users)) {
+			        const userPanel = createUserPanel(ip, userName);
+			        usersContainer.appendChild(userPanel);
+			    }
+
+			    // Initial data fetch
+			    updateStats();
+
+			    // Set up polling for stats
+			    setInterval(updateStats, 1000);
+			});
+
+			function createUserPanel(ip, userName) {
+			    const col = document.createElement('div');
+			    col.className = 'col-md-6 mb-3';
+
+			    col.innerHTML = `
+			        <div class="card user-panel" data-ip="${ip}">
+			            <div class="card-header">${userName} (${ip})</div>
+			            <div class="card-body">
+			                <div class="alert-container">
+			                    <div class="alert alert-info d-none" role="alert" id="alert-${ip}"></div>
+			                </div>
+
+			                <div class="data-container mb-3">
+			                    <h5>API Data:</h5>
+			                    <pre id="data-${ip}" class="border rounded p-2 bg-light">No data fetched yet</pre>
+			                </div>
+
+			                <div class="rate-info">
+			                    <div class="ip-limit-bar">
+			                        <div class="d-flex justify-content-between">
+			                            <span>IP Rate Limit:</span>
+			                            <span id="ip-count-${ip}">0/${IP_RATE_LIMIT}</span>
+			                        </div>
+			                        <div class="progress">
+			                            <div id="ip-progress-${ip}" class="progress-bar" role="progressbar"
+			                                style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+			                        </div>
+			                    </div>
+			                </div>
+
+			                <button class="btn btn-primary mt-3" onclick="fetchData('${ip}')">
+			                    Fetch Data
+			                </button>
+			            </div>
+			        </div>
+			    `;
+
+			    return col;
+			}
+
+			function fetchData(ip) {
+			    // Simulate fetching from a specific IP by passing it in headers
+			    fetch('/api/data', {
+			        headers: {
+			            'X-Forwarded-For': ip
+			        }
+			    })
+			    .then(response => {
+			        if (!response.ok) {
+			            return response.json().then(data => {
+			                throw new Error(data.error);
+			            });
+			        }
+			        return response.json();
+			    })
+			    .then(data => {
+			        const dataElement = document.getElementById(`data-${ip}`);
+			        dataElement.textContent = JSON.stringify(data.data, null, 2);
+
+			        hideAlert(ip);
+			        updateStats();
+			    })
+			    .catch(error => {
+			        showAlert(ip, error.message);
+			        updateStats();
+			    });
+			}
+
+			function updateStats() {
+			    fetch('/api/stats')
+			        .then(response => response.json())
+			        .then(stats => {
+			            // Update global request counter
+			            document.getElementById('request-counter').textContent = stats.total_requests;
+
+			            // Update global rate limit
+			            const globalCount = stats.current_window.global_count;
+			            document.getElementById('global-count').textContent = `${globalCount}/${GLOBAL_RATE_LIMIT}`;
+			            const globalPercentage = (globalCount / GLOBAL_RATE_LIMIT) * 100;
+			            const globalProgress = document.getElementById('global-progress');
+			            globalProgress.style.width = `${globalPercentage}%`;
+			            globalProgress.setAttribute('aria-valuenow', globalPercentage);
+
+			            if (globalPercentage >= 100) {
+			                globalProgress.classList.add('bg-danger');
+			            } else if (globalPercentage >= 75) {
+			                globalProgress.classList.add('bg-warning');
+			                globalProgress.classList.remove('bg-danger');
+			            } else {
+			                globalProgress.classList.remove('bg-warning', 'bg-danger');
+			            }
+
+			            // Update time window
+			            document.getElementById('time-window').textContent = `${stats.current_window.window_size} seconds`;
+
+			            // Update each user's stats
+			            for (const [ip, data] of Object.entries(stats.current_window.ip_stats)) {
+			                const ipCount = data.count;
+			                const ipCountElement = document.getElementById(`ip-count-${ip}`);
+			                if (ipCountElement) {
+			                    ipCountElement.textContent = `${ipCount}/${IP_RATE_LIMIT}`;
+
+			                    const ipPercentage = (ipCount / IP_RATE_LIMIT) * 100;
+			                    const ipProgress = document.getElementById(`ip-progress-${ip}`);
+			                    ipProgress.style.width = `${ipPercentage}%`;
+			                    ipProgress.setAttribute('aria-valuenow', ipPercentage);
+
+			                    if (ipPercentage >= 100) {
+			                        ipProgress.classList.add('bg-danger');
+			                    } else if (ipPercentage >= 75) {
+			                        ipProgress.classList.add('bg-warning');
+			                        ipProgress.classList.remove('bg-danger');
+			                    } else {
+			                        ipProgress.classList.remove('bg-warning', 'bg-danger');
+			                    }
+			                }
+			            }
+			        })
+			        .catch(console.error);
+			}
+
+			function showAlert(ip, message) {
+			    const alertElement = document.getElementById(`alert-${ip}`);
+			    alertElement.textContent = message;
+			    alertElement.classList.remove('d-none');
+			    alertElement.classList.add('alert-danger');
+			}
+
+			function hideAlert(ip) {
+			    const alertElement = document.getElementById(`alert-${ip}`);
+			    alertElement.classList.add('d-none');
+			    alertElement.classList.remove('alert-danger');
+			}
+		</script>
+	</body>
+</html>
